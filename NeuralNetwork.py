@@ -1,7 +1,10 @@
 import numpy as np
+import random as rn
 import sklearn.datasets
 import sklearn.linear_model
 import matplotlib.pyplot as plt
+
+#np.seterr(all='raise')
 
 class Neural_Network(object):
     def __init__(self, inputLayerSize=2, outputLayerSize=1, hiddenLayerSize=5, func='tanh', learning='momentum'):
@@ -13,8 +16,8 @@ class Neural_Network(object):
         self.W1 = np.random.randn(self.inputLayerSize + 1, self.hiddenLayerSize)
         self.W2 = np.random.randn(self.hiddenLayerSize + 1, self.outputLayerSize)
 
-        self.gradStep = 0.0001
-        self.reg_lambda = 0.005
+        self.gradStep = 0.001
+        self.reg_lambda = 0.001
 
         self.func = func
         self.learning = learning
@@ -25,6 +28,8 @@ class Neural_Network(object):
         self.vb2 = 0.0
 
         self.mu = 0.99
+        self.batch_size = 64
+        self.cache = np.zeros(4)
 
     def forward(self, X):
         self.z2 = np.dot(X, self.W1[:-1,:]) + self.W1[-1,:]
@@ -57,8 +62,26 @@ class Neural_Network(object):
         return dJdW1, dJdW2, dJdb1, dJdb2
 
     def backward(self, X, y):
-        dJdW1, dJdW2, dJdb1, dJdb2 = self.costFunctionPrime(X,y)
 
+        Xy = zip(X,y)
+        rn.shuffle(Xy)
+        X_shuff, y_shuff = zip(*Xy)
+        X_shuff = np.array(X_shuff)
+        y_shuff = np.array(y_shuff)
+
+        for i in xrange(0, X_shuff.shape[0], self.batch_size):
+
+            dJdW1, dJdW2, dJdb1, dJdb2 = self.costFunctionPrime(X_shuff[i:i+self.batch_size],y_shuff[i:i+self.batch_size])
+
+            self.calculate_vs(dJdW1, dJdW2, dJdb1, dJdb2)
+
+            self.W1[:-1,:] = self.W1[:-1,:] + self.vW1
+            self.W1[-1,:] = self.W1[-1,:] + self.vb1
+
+            self.W2[:-1,:] = self.W2[:-1,:] + self.vW2
+            self.W2[-1,:] = self.W2[-1,:] + self.vb2
+
+    def calculate_vs(self, dJdW1, dJdW2, dJdb1, dJdb2):
         if self.learning == 'momentum':
             self.vW1 = self.mu * self.vW1 - self.gradStep * dJdW1
             self.vb1 = self.mu * self.vb1 - self.gradStep * dJdb1
@@ -77,11 +100,13 @@ class Neural_Network(object):
             self.vW2 = - self.gradStep * dJdW2
             self.vb2 = - self.gradStep * dJdb2
 
-        self.W1[:-1,:] = self.W1[:-1,:] + self.vW1
-        self.W1[-1,:] = self.W1[-1,:] + self.vb1
+        elif self.learning == 'adagrad':
+            self.cache = self.cache + np.array([dJdW1, dJdb1, dJdW2, dJdb2])**2
 
-        self.W2[:-1,:] = self.W2[:-1,:] + self.vW2
-        self.W2[-1,:] = self.W2[-1,:] + self.vb2
+            self.vW1 = - self.gradStep * dJdW1 / np.sqrt(self.cache[0] + 0.0001)
+            self.vb1 = - self.gradStep * dJdb1 / np.sqrt(self.cache[1] + 0.0001)
+            self.vW2 = - self.gradStep * dJdW2 / np.sqrt(self.cache[2] + 0.0001)
+            self.vb2 = - self.gradStep * dJdb2 / np.sqrt(self.cache[3] + 0.0001)
 
     def train(self, X, y, iterate=1000):
         print 'Initial cost: ', self.costFunction(X,y)
@@ -99,8 +124,7 @@ class Neural_Network(object):
             if (deriv==False):
                 return np.tanh(z)
             else:
-                return (1./np.cosh(z))**2
-
+                return (1. - np.tanh(z)**2)
 
 def normalise(X,y):
     X = (X - np.amin(X, axis=0))/(np.amax(X, axis=0) - np.amin(X, axis=0))
@@ -126,11 +150,11 @@ if test == 1:
     y = np.array(([75], [82], [93]), dtype=float)
 
 elif test == 2:
-    X, y = sklearn.datasets.make_moons(200, noise=0.1)
+    X, y = sklearn.datasets.make_moons(200, noise=0.1, random_state=0)
     y = y.reshape(y.size,1).astype(float)
 
 elif test == 3:
-    X, y = sklearn.datasets.make_circles(200, noise=0.1, factor = 0.1)
+    X, y = sklearn.datasets.make_circles(200, noise=0.1, factor = 0.1, random_state=0)
     y = y.reshape(y.size,1).astype(float)
 
 elif test == 4:
@@ -146,8 +170,8 @@ elif test == 5:
 X, meanX, stdX = standardise(X)
 y, meany, stdy = standardise(y)
 NN = Neural_Network(inputLayerSize=inputLayerSize, hiddenLayerSize=10,
-                    func='tanh', learning='momentum')
-NN.train(X,y,iterate=100000)
+                    func='tanh', learning='NAG')
+NN.train(X,y,iterate=10000)
 
 if test == 1:
     print destandardise(NN.forward(X), meany, stdy)
