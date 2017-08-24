@@ -7,7 +7,8 @@ import matplotlib.pyplot as plt
 #np.seterr(all='raise')
 
 class Neural_Network(object):
-    def __init__(self, inputLayerSize=2, outputLayerSize=1, hiddenLayerSize=5, func='tanh', learning='momentum'):
+    def __init__(self, inputLayerSize=2, outputLayerSize=1, hiddenLayerSize=5,
+                 batch_size=64, func='tanh', learning='momentum'):
         np.random.seed(0)
         self.inputLayerSize = inputLayerSize
         self.outputLayerSize = outputLayerSize
@@ -16,20 +17,24 @@ class Neural_Network(object):
         self.W1 = np.random.randn(self.inputLayerSize + 1, self.hiddenLayerSize)
         self.W2 = np.random.randn(self.hiddenLayerSize + 1, self.outputLayerSize)
 
-        self.gradStep = 0.001
-        self.reg_lambda = 0.001
+        self.gradStep = 0.005
+        self.reg_lambda = 0.0
 
         self.func = func
         self.learning = learning
 
-        self.vW1 = 0.0
-        self.vW2 = 0.0
-        self.vb1 = 0.0
-        self.vb2 = 0.0
+        self.vs = np.zeros(4)
 
-        self.mu = 0.99
-        self.batch_size = 64
+        self.mu = 0.5
+        self.batch_size = batch_size
         self.cache = np.zeros(4)
+        self.cachev = np.zeros(4)
+        self.cachedJ = np.zeros(4)
+        self.beta1 = 0.9
+        self.beta2 = 0.999
+        self.decay = 0.9
+        self.error_history = np.empty((0,2))
+        self.epsilon = 1e-8
 
     def forward(self, X):
         self.z2 = np.dot(X, self.W1[:-1,:]) + self.W1[-1,:]
@@ -61,7 +66,7 @@ class Neural_Network(object):
 
         return dJdW1, dJdW2, dJdb1, dJdb2
 
-    def backward(self, X, y):
+    def backward(self, X, y, t):
 
         Xy = zip(X,y)
         rn.shuffle(Xy)
@@ -73,46 +78,49 @@ class Neural_Network(object):
 
             dJdW1, dJdW2, dJdb1, dJdb2 = self.costFunctionPrime(X_shuff[i:i+self.batch_size],y_shuff[i:i+self.batch_size])
 
-            self.calculate_vs(dJdW1, dJdW2, dJdb1, dJdb2)
+            self.calculate_vs(np.array([dJdW1, dJdb1, dJdW2, dJdb2]), t)
 
-            self.W1[:-1,:] = self.W1[:-1,:] + self.vW1
-            self.W1[-1,:] = self.W1[-1,:] + self.vb1
+            self.W1[:-1,:] = self.W1[:-1,:] + self.vs[0]
+            self.W1[-1,:] = self.W1[-1,:] + self.vs[1]
 
-            self.W2[:-1,:] = self.W2[:-1,:] + self.vW2
-            self.W2[-1,:] = self.W2[-1,:] + self.vb2
+            self.W2[:-1,:] = self.W2[:-1,:] + self.vs[2]
+            self.W2[-1,:] = self.W2[-1,:] + self.vs[3]
 
-    def calculate_vs(self, dJdW1, dJdW2, dJdb1, dJdb2):
+    def calculate_vs(self, dJs, t):
         if self.learning == 'momentum':
-            self.vW1 = self.mu * self.vW1 - self.gradStep * dJdW1
-            self.vb1 = self.mu * self.vb1 - self.gradStep * dJdb1
-            self.vW2 = self.mu * self.vW2 - self.gradStep * dJdW2
-            self.vb2 = self.mu * self.vb2 - self.gradStep * dJdb2
+            self.vs = self.mu * self.vs - self.gradStep * dJs
 
         elif self.learning == 'NAG':
-            self.vW1 = -(self.mu * self.vW1) + (1. + self.mu) * (self.mu * self.vW1 - self.gradStep * dJdW1)
-            self.vb1 = -(self.mu * self.vb1) + (1. + self.mu) * (self.mu * self.vb1 - self.gradStep * dJdb1)
-            self.vW2 = -(self.mu * self.vW2) + (1. + self.mu) * (self.mu * self.vW2 - self.gradStep * dJdW2)
-            self.vb2 = -(self.mu * self.vb2) + (1. + self.mu) * (self.mu * self.vb2 - self.gradStep * dJdb2)
+            self.vs = -(self.mu * self.vs) + (1. + self.mu) * (self.mu * self.vs - self.gradStep * dJs)
 
         elif self.learning == 'standard':
-            self.vW1 = - self.gradStep * dJdW1
-            self.vb1 = - self.gradStep * dJdb1
-            self.vW2 = - self.gradStep * dJdW2
-            self.vb2 = - self.gradStep * dJdb2
+            self.vs = - self.gradStep * dJs
 
         elif self.learning == 'adagrad':
-            self.cache = self.cache + np.array([dJdW1, dJdb1, dJdW2, dJdb2])**2
+            self.cache = self.cache + dJs**2
+            self.vs = - self.gradStep * dJs / np.array([np.sqrt(cache + self.epsilon) for i,cache in enumerate(self.cache)])
 
-            self.vW1 = - self.gradStep * dJdW1 / np.sqrt(self.cache[0] + 0.0001)
-            self.vb1 = - self.gradStep * dJdb1 / np.sqrt(self.cache[1] + 0.0001)
-            self.vW2 = - self.gradStep * dJdW2 / np.sqrt(self.cache[2] + 0.0001)
-            self.vb2 = - self.gradStep * dJdb2 / np.sqrt(self.cache[3] + 0.0001)
+        elif self.learning == 'RMSprop':
+            self.cache = self.decay * self.cache + (1. - self.decay) * dJs**2
+            self.vs = - self.gradStep * dJs / np.array([np.sqrt(cache + self.epsilon) for i,cache in enumerate(self.cache)])
+
+        elif self.learning == 'adam':
+            self.cachedJ = self.beta1 * self.cachedJ + (1. - self.beta1) * dJs
+            self.cachev = self.beta2 * self.cachev + (1. - self.beta2) * dJs**2
+
+            cachedJt = self.cachedJ / (1. - self.beta1**(t+1.))
+            cachevt = self.cachev / (1. - self.beta2**(t+1.))
+
+            self.vs = - self.gradStep * cachedJt / np.array([np.sqrt(cache + self.epsilon) for i,cache in enumerate(cachevt)])
+
 
     def train(self, X, y, iterate=1000):
         print 'Initial cost: ', self.costFunction(X,y)
         for i in xrange(iterate):
-            self.backward(X,y)
+            self.backward(X,y,i)
             if int(i+1) % (iterate/10) == 0: print i+1, self.costFunction(X,y)
+            #self.error_history = np.append(self.error_history, [[i, self.costFunction(X,y)]], axis=0)
+            
 
     def transfer(self, z, deriv=False):
         if self.func=='sigmoid':
@@ -125,6 +133,13 @@ class Neural_Network(object):
                 return np.tanh(z)
             else:
                 return (1. - np.tanh(z)**2)
+        elif self.func=='ReLU':
+            if (deriv==False):
+                z = np.where(z > 0, z, z * 0.1)
+                return z
+            else:
+                z = np.where(z > 0, 1, 0.1)
+                return z
 
 def normalise(X,y):
     X = (X - np.amin(X, axis=0))/(np.amax(X, axis=0) - np.amin(X, axis=0))
@@ -164,14 +179,16 @@ elif test == 4:
 elif test == 5:
     X = np.linspace(-5*np.pi, 5*np.pi, 201)
     X = X.reshape(X.size,1).astype(float)
-    y = np.sinc(X)
+    y = np.sin(X)
     inputLayerSize = 1
 
-X, meanX, stdX = standardise(X)
-y, meany, stdy = standardise(y)
-NN = Neural_Network(inputLayerSize=inputLayerSize, hiddenLayerSize=10,
-                    func='tanh', learning='NAG')
-NN.train(X,y,iterate=10000)
+#X, meanX, stdX = standardise(X)
+#y, meany, stdy = standardise(y)
+X,y = normalise(X,y)
+NN = Neural_Network(inputLayerSize=inputLayerSize, hiddenLayerSize=500,
+                    func='ReLU', learning='adam')
+NN.train(X,y,iterate=100000)
+#np.savetxt('error.ev', NN.error_history, header='#')
 
 if test == 1:
     print destandardise(NN.forward(X), meany, stdy)
@@ -201,7 +218,7 @@ elif test == 5:
     y_predicted = NN.forward(X)
     #y_predicted = destandardise(NN.forward(X), meany, stdy)
     #y = destandardise(y, meany, stdy)
-    X = destandardise(X, meanX, stdX)
+    #X = destandardise(X, meanX, stdX)
 
     plt.plot(X,y)
     plt.plot(X,y_predicted)
